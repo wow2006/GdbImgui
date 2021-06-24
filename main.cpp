@@ -4,6 +4,7 @@
 #include <fmt/color.h>
 #include <fmt/printf.h>
 // imgui
+#include <TextEditor.h>
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl.h>
@@ -38,8 +39,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(
       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
-  auto *pWindow = SDL_CreateWindow("GdbImgui", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
-  if(pWindow == nullptr) {
+  auto *pWindow =
+      SDL_CreateWindow("GdbImgui", SDL_WINDOWPOS_CENTERED,
+                       SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
+  if (pWindow == nullptr) {
     fmt::print(fg(fmt::color::red), "ERROR: Can not create SDL2 window\n");
     return EXIT_FAILURE;
   }
@@ -48,9 +51,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   SDL_GL_MakeCurrent(pWindow, context);
   SDL_GL_SetSwapInterval(1);
 
-  glbinding::initialize([](const char *name) {
-    return reinterpret_cast<glbinding::ProcAddress>(SDL_GL_GetProcAddress(name));
-  }, false);
+  glbinding::initialize(
+      [](const char *name) {
+        return reinterpret_cast<glbinding::ProcAddress>(
+            SDL_GL_GetProcAddress(name));
+      },
+      false);
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -63,6 +69,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   ImGui_ImplOpenGL3_Init(glsl_version);
 
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+  TextEditor editor;
+  auto lang = TextEditor::LanguageDefinition::CPlusPlus();
+  editor.SetLanguageDefinition(lang);
 
   bool bRunning = true;
   while (bRunning) {
@@ -82,9 +92,79 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
     ImGui_ImplSDL2_NewFrame(pWindow);
     ImGui::NewFrame();
 
+    {
+      auto cpos = editor.GetCursorPosition();
+      ImGui::Begin("Text Editor Demo", nullptr,
+                   ImGuiWindowFlags_HorizontalScrollbar |
+                       ImGuiWindowFlags_MenuBar);
+      ImGui::SetWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
+      if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+          if (ImGui::MenuItem("Save")) {
+            auto textToSave = editor.GetText();
+            /// save text....
+          }
+          if (ImGui::MenuItem("Quit", "Alt-F4"))
+            break;
+          ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Edit")) {
+          bool ro = editor.IsReadOnly();
+          if (ImGui::MenuItem("Read-only mode", nullptr, &ro))
+            editor.SetReadOnly(ro);
+          ImGui::Separator();
+
+          if (ImGui::MenuItem("Undo", "ALT-Backspace", nullptr,
+                              !ro && editor.CanUndo()))
+            editor.Undo();
+          if (ImGui::MenuItem("Redo", "Ctrl-Y", nullptr,
+                              !ro && editor.CanRedo()))
+            editor.Redo();
+
+          ImGui::Separator();
+
+          if (ImGui::MenuItem("Copy", "Ctrl-C", nullptr, editor.HasSelection()))
+            editor.Copy();
+          if (ImGui::MenuItem("Cut", "Ctrl-X", nullptr,
+                              !ro && editor.HasSelection()))
+            editor.Cut();
+          if (ImGui::MenuItem("Delete", "Del", nullptr,
+                              !ro && editor.HasSelection()))
+            editor.Delete();
+          if (ImGui::MenuItem("Paste", "Ctrl-V", nullptr,
+                              !ro && ImGui::GetClipboardText() != nullptr))
+            editor.Paste();
+
+          ImGui::Separator();
+
+          if (ImGui::MenuItem("Select all", nullptr, nullptr))
+            editor.SetSelection(
+                TextEditor::Coordinates(),
+                TextEditor::Coordinates(editor.GetTotalLines(), 0));
+
+          ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")) {
+          if (ImGui::MenuItem("Dark palette"))
+            editor.SetPalette(TextEditor::GetDarkPalette());
+          if (ImGui::MenuItem("Light palette"))
+            editor.SetPalette(TextEditor::GetLightPalette());
+          if (ImGui::MenuItem("Retro blue palette"))
+            editor.SetPalette(TextEditor::GetRetroBluePalette());
+          ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+      }
+
+      editor.Render("TextEditor");
+      ImGui::End();
+    }
+
     // Rendering
     ImGui::Render();
-    glViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
+    glViewport(0, 0, static_cast<int>(io.DisplaySize.x),
+               static_cast<int>(io.DisplaySize.y));
     glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w,
                  clear_color.z * clear_color.w, clear_color.w);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -102,4 +182,3 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   SDL_Quit();
   return EXIT_SUCCESS;
 }
-

@@ -7,7 +7,8 @@ find_package(SDL2      REQUIRED)
 find_package(OpenGL    REQUIRED)
 find_package(glbinding REQUIRED)
 
-set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui/)
+set(IMGUI_DIR              ${CMAKE_SOURCE_DIR}/thirdparty/imgui/)
+set(IMGUICOLORTEXTEDIT_DIR ${CMAKE_SOURCE_DIR}/thirdparty/ImGuiColorTextEdit)
 
 add_library(
   imgui_sdl_opengl
@@ -24,6 +25,7 @@ target_sources(
   ${IMGUI_DIR}/imgui_widgets.cpp
   ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
   ${IMGUI_DIR}/backends/imgui_impl_sdl.cpp
+  ${IMGUICOLORTEXTEDIT_DIR}/TextEditor.cpp
 )
 
 target_link_libraries(
@@ -39,6 +41,7 @@ target_include_directories(
   SYSTEM PUBLIC
   ${IMGUI_DIR}
   ${IMGUI_DIR}/backends/
+  ${IMGUICOLORTEXTEDIT_DIR}
 )
 
 add_library(
