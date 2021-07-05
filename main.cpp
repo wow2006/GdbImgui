@@ -1,5 +1,12 @@
 // STL
+#include <string>
 #include <cstdlib>
+#include <fstream>
+// UNIX
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
 // fmt
 #include <fmt/color.h>
 #include <fmt/printf.h>
@@ -20,7 +27,14 @@ namespace SDL2 {
 inline constexpr uint32_t SUCCESS = 0;
 } // namespace SDL2
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
+static int CreateGUI(int frontendToGDB[2], int gdbToFrontend[2], pid_t childProcess) {
+  int pidStatus;
+  if(waitpid(childProcess, &pidStatus, WNOHANG) == childProcess) {
+    int wout = write(STDOUT_FILENO, "Gdb exitted.", 11);
+    (void)wout;
+    return EXIT_FAILURE;
+  }
+
   if (SDL_Init(SDL_INIT_VIDEO) != SDL2::SUCCESS) {
     fmt::print(fg(fmt::color::red), "ERROR: Can not initialize SDL2\n");
     return EXIT_FAILURE;
@@ -31,9 +45,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-
   // Create window with graphics context
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+  // SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(
@@ -74,17 +87,27 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   auto lang = TextEditor::LanguageDefinition::CPlusPlus();
   editor.SetLanguageDefinition(lang);
 
+  // Close stdin
+  //close(fd[STDIN_FILENO]);
+  constexpr size_t CommandSize = 512;
+  char command[CommandSize] = {};
+
+  constexpr size_t HistorySize = 512;
+  char history[HistorySize] = {};
+
   bool bRunning = true;
   while (bRunning) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       ImGui_ImplSDL2_ProcessEvent(&event);
-      if (event.type == SDL_QUIT)
+      if (event.type == SDL_QUIT) {
         bRunning = false;
+      }
       if (event.type == SDL_WINDOWEVENT &&
           event.window.event == SDL_WINDOWEVENT_CLOSE &&
-          event.window.windowID == SDL_GetWindowID(pWindow))
+          event.window.windowID == SDL_GetWindowID(pWindow)) {
         bRunning = false;
+      }
     }
 
     // Start the Dear ImGui frame
@@ -93,10 +116,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
     ImGui::NewFrame();
 
     {
-      auto cpos = editor.GetCursorPosition();
-      ImGui::Begin("Text Editor Demo", nullptr,
-                   ImGuiWindowFlags_HorizontalScrollbar |
-                       ImGuiWindowFlags_MenuBar);
+      // auto cpos = editor.GetCursorPosition();
+      ImGui::Begin("Text Editor Demo", nullptr, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_MenuBar);
       ImGui::SetWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
       if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -158,6 +179,19 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
       }
 
       editor.Render("TextEditor");
+
+      read(gdbToFrontend[0], history, HistorySize);
+      //write(s_frontend_to_gdb[1], exitString, (strlen(exitString) + 1));
+
+      ImGui::Begin("GDB", nullptr, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_MenuBar);
+        ImGui::Text("%s", history);
+        fmt::print("History: {}\n", history);
+        if(ImGui::InputText("$", command, CommandSize)) {
+          fmt::print("Command: {}\n", command);
+          // write(s_frontend_to_gdb[1], command, (strlen(command) + 1));
+        }
+      ImGui::End();
+
       ImGui::End();
     }
 
@@ -172,6 +206,26 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
     SDL_GL_SwapWindow(pWindow);
   }
 
+  fmt::print("1. Quit\n");
+
+  const char *exitString = "quit\n";
+  write(frontendToGDB[1], exitString, (strlen(exitString) + 1));
+  // int wout = write(s_frontend_to_gdb[1], s_cmd_buff, written);
+
+  fmt::print("2. Quit\n");
+
+  fmt::print("1. waitpid\n");
+
+  int cstatus;
+  waitpid(childProcess, &cstatus, 0);
+
+  fmt::print("2. waitpid\n");
+
+  // Close stdin
+  // close(fd[0]);
+  // Close stdout
+  //close(fd[1]);
+
   // Cleanup
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();
@@ -181,4 +235,56 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char *argv[]) {
   SDL_DestroyWindow(pWindow);
   SDL_Quit();
   return EXIT_SUCCESS;
+}
+
+[[noreturn]] static void DebugProcess(int frontendToGDB[2], int gdbToFrontend[2]) {
+  dup2(frontendToGDB[0], STDIN_FILENO);
+  dup2(gdbToFrontend[1], STDOUT_FILENO);
+
+  char *argsGDB[] = {"/usr/bin/gdb", "--interpreter=mi", "--quiet", nullptr};
+  execvp(argsGDB[0], argsGDB);
+
+  _exit(EXIT_SUCCESS);
+}
+
+int main(int argc, char *argv[]) {
+  if (argc < 2) {
+    fmt::print(stderr, fg(fmt::color::yellow), "Usage: {} exec_path args\n",
+               argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  int frontendToGDB[2];
+  int gdbToFrontend[2];
+  if(pipe(frontendToGDB) != 0 &&
+     pipe(gdbToFrontend) != 0) {
+    fmt::print(stderr, fg(fmt::color::red), "Can not create pipe\n");
+    return EXIT_FAILURE;
+  }
+
+  // frontend
+  int fstate = fcntl(frontendToGDB[1], F_GETFL, 0);
+  fstate     = fstate | O_NONBLOCK;
+  fcntl(frontendToGDB[1], F_SETFL, fstate);
+
+  fstate = fcntl(gdbToFrontend[0], F_GETFL, 0);
+  fstate = fstate | O_NONBLOCK;
+  fcntl(gdbToFrontend[0], F_SETFL, fstate);
+
+  // gdb
+  fstate = fcntl(frontendToGDB[0], F_GETFL, 0);
+  fstate = fstate | O_NONBLOCK;
+  fcntl(frontendToGDB[0], F_SETFL, fstate);
+
+  const auto processID = fork();
+  switch (processID) {
+  case -1:
+    fmt::print(stderr, fg(fmt::color::red),
+               "ERROR: Can not create a new process\n.");
+    return EXIT_FAILURE;
+  case 0: // Child
+    DebugProcess(frontendToGDB, gdbToFrontend);
+    return EXIT_SUCCESS;
+  }
+  return CreateGUI(frontendToGDB, gdbToFrontend, processID);
 }
